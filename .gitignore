@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Xcode / Swift
+.build/
+.swiftpm/
+*.o
+*.d
+*.swp
+DerivedData/
+*.xcuserstate
+
+# Build artifacts
+Nightfall.app/
+Nightfall.dmg
+dmg_tmp/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
