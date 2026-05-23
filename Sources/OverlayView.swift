@@ -858,28 +858,40 @@ final class OverlayView: NSView {
         panel.canCreateDirectories = true
         panel.title = "Save Screenshot"
 
-        let saveWindow = self.window
-        saveWindow?.level = .normal
+        weak var win = self.window_
+        win?.level = .normal
 
         panel.begin { [weak self] response in
-            saveWindow?.level = .screenSaver
+            win?.level = .screenSaver
             if response == .OK, let url = panel.url {
                 do {
                     try data.write(to: url)
                     self?.window_?.requestFinish()
                 } catch {
                     NSAlert(error: error).runModal()
+                    self?.window_?.requestFinish()   // всё равно закрываем сессию
                 }
             }
+            // если отменили — окно остаётся, level уже восстановлен
         }
     }
 
     private func copyToClipboard() {
-        guard let image = renderSelectionImage() else { NSSound.beep(); return }
+        guard let image = renderSelectionImage(),
+              let tiff = image.tiffRepresentation,
+              let rep  = NSBitmapImageRep(data: tiff),
+              let png  = rep.representation(using: .png, properties: [:])
+        else { NSSound.beep(); return }
+
         let pb = NSPasteboard.general
         pb.clearContents()
+        // Кладём и PNG, и NSImage — надёжнее для разных приёмников
+        pb.setData(png, forType: .png)
         pb.writeObjects([image])
-        window_?.requestFinish()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.window_?.requestFinish()
+        }
     }
 
     private func pngData(from image: NSImage) -> Data? {

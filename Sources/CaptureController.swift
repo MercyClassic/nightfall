@@ -18,6 +18,7 @@ final class CaptureController {
     private let mode: CaptureMode
     private let onFinished: () -> Void
     private var overlay: OverlayWindow?
+    private var finished = false
 
     init(mode: CaptureMode, onFinished: @escaping () -> Void) {
         self.mode = mode
@@ -63,7 +64,10 @@ final class CaptureController {
 
     /// Called by the overlay when the user saves / copies / cancels.
     func finish() {
+        if finished { return }
+        finished = true
         if let overlay = overlay {
+            overlay.coordinator = nil
             overlay.orderOut(nil)
             overlay.close()
         }
