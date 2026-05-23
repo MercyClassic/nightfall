@@ -95,9 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startCapture(mode: CaptureMode) {
-        if captureController != nil { return }
+        guard captureController == nil else {
+            NSLog("Nightfall: capture already in progress")
+            return
+        }
         let controller = CaptureController(mode: mode) { [weak self] in
-            self?.captureController = nil
+            DispatchQueue.main.async { self?.captureController = nil }
         }
         captureController = controller
         controller.start()

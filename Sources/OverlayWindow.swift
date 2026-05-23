@@ -44,6 +44,8 @@ final class OverlayWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 
     func requestFinish() {
-        coordinator?.finish()
+        let c = coordinator
+        coordinator = nil
+        c?.finish()
     }
 }
