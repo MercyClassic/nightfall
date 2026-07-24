@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 
 final class OverlayView: NSView {
 
@@ -402,10 +403,13 @@ final class OverlayView: NSView {
             return
         }
         if event.modifierFlags.contains(.command) {
-            switch event.charactersIgnoringModifiers?.lowercased() {
-            case "c": copyToClipboard(); return
-            case "s": saveToFile();      return
-            case "z":
+            // Key codes, not characters: charactersIgnoringModifiers is
+            // layout-dependent, so on a Russian layout ⌘C arrives as "с"
+            // and ⌘Z as "я", and no Latin comparison ever matches.
+            switch Int(event.keyCode) {
+            case kVK_ANSI_C: copyToClipboard(); return
+            case kVK_ANSI_S: saveToFile();      return
+            case kVK_ANSI_Z:
                 if event.modifierFlags.contains(.shift) { redo() } else { undo() }
                 return
             default: break
