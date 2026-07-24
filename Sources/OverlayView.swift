@@ -879,10 +879,11 @@ final class OverlayView: NSView {
     }
 
     private func copyToClipboard() {
-        guard let image = renderSelectionImage() else { NSSound.beep(); return }
+        guard let image = renderSelectionImage(),
+            let png = pngData(from: image) else { NSSound.beep(); return }
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.writeObjects([image])
+        pb.setData(png, forType: .png)
         window_?.requestFinish()
     }
 
