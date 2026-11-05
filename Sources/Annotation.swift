@@ -14,6 +14,7 @@ enum Tool: Int, CaseIterable {
     case marker        // semi-transparent highlighter
     case blur          // gaussian blur over a rect
     case text
+    case textSelect    // OCR: select recognised text and copy it
     case colorPicker   // not a drawing tool itself
 
     var iconSymbol: String {
@@ -25,6 +26,7 @@ enum Tool: Int, CaseIterable {
         case .marker:      return "highlighter"
         case .blur:        return "drop.halffull"
         case .text:        return "textformat"
+        case .textSelect:  return "text.viewfinder"
         case .colorPicker: return "paintpalette"
         }
     }
@@ -38,6 +40,7 @@ enum Tool: Int, CaseIterable {
         case .marker:      return "Marker"
         case .blur:        return "Blur"
         case .text:        return "Text"
+        case .textSelect:  return "Select Text  (⌘C to copy)"
         case .colorPicker: return "Color"
         }
     }
@@ -45,16 +48,24 @@ enum Tool: Int, CaseIterable {
     /// Whether the tool uses the configurable color from the palette.
     var usesColor: Bool {
         switch self {
-        case .blur: return false
-        default:    return true
+        case .blur, .textSelect: return false
+        default:                 return true
         }
     }
 
     /// Whether the tool uses the configurable stroke width.
     var usesStrokeWidth: Bool {
         switch self {
-        case .text, .blur: return false
-        default:           return true
+        case .text, .blur, .textSelect: return false
+        default:                        return true
+        }
+    }
+
+    /// Tools that don't add an annotation to the exported image.
+    var isDrawingTool: Bool {
+        switch self {
+        case .textSelect, .colorPicker: return false
+        default:                        return true
         }
     }
 }

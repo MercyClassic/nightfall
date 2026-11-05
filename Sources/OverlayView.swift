@@ -30,6 +30,7 @@ final class OverlayView: NSView {
         case movingSelection
         case resizingSelection(ResizeHandle)
         case editingText(TextAnnotation)
+        case selectingText        // dragging over OCR'd text
     }
 
     enum ResizeHandle {
@@ -63,6 +64,17 @@ final class OverlayView: NSView {
     private var colorPaletteView: ColorPaletteView?
     private var strokeWidthPaletteView: StrokeWidthPaletteView?
     private var textFieldView: NSTextField?
+
+    // MARK: - Text recognition (OCR / "select text")
+
+    private var textLayout: RecognizedTextLayout?
+    private var isRecognizingText = false
+    private var recognizedRegion: NSRect = .zero
+    private var recognitionToken = 0
+    private var textAnchor: TextPosition?
+    private var textHead: TextPosition?
+    private var toastMessage: String?
+    private var toastWorkItem: DispatchWorkItem?
 
     // MARK: - Interaction tracking
 
@@ -154,6 +166,13 @@ final class OverlayView: NSView {
         //    across the boundary. Export still crops to the selection.
         for ann in annotations { ann.draw(in: ctx) }
         currentAnnotation?.draw(in: ctx)
+
+        // 6. OCR layer — highlight + status. Purely on-screen chrome: it is
+        //    never part of the exported image.
+        if activeTool == .textSelect { drawTextLayer(in: ctx) }
+
+        // 7. Transient toast ("Text copied").
+        drawToast(in: ctx)
     }
 
     private func drawCrosshair(in ctx: CGContext) {
@@ -280,6 +299,18 @@ final class OverlayView: NSView {
         // Commit any active text edit.
         if case .editingText = state { commitTextEditing() }
 
+        if let sel = selection, activeTool == .textSelect {
+            let onText = textLayout?.hitTest(point) != nil
+            // Edges still resize, but only where there's no text to grab.
+            if !onText, let handle = resizeHandle(at: point, in: sel) {
+                state = .resizingSelection(handle)
+                selectionAtDragStart = sel
+                return
+            }
+            beginTextSelection(at: point, clickCount: event.clickCount)
+            return
+        }
+
         if let sel = selection {
             if let handle = resizeHandle(at: point, in: sel) {
                 state = .resizingSelection(handle)
@@ -358,6 +389,10 @@ final class OverlayView: NSView {
             updateDrawing(to: point)
             needsDisplay = true
 
+        case .selectingText:
+            textHead = textLayout?.nearestPosition(to: point) ?? textHead
+            needsDisplay = true
+
         default: break
         }
         updateCursor()
@@ -381,6 +416,13 @@ final class OverlayView: NSView {
         case .movingSelection, .resizingSelection:
             state = .editing
             setupToolbars()
+            // The OCR region moved — recognise the new contents.
+            if activeTool == .textSelect {
+                clearTextSelection()
+                startTextRecognition()
+            }
+        case .selectingText:
+            state = .editing
         default: break
         }
         needsDisplay = true
@@ -393,6 +435,12 @@ final class OverlayView: NSView {
         // Esc
         if event.keyCode == 53 {
             if case .editingText = state { cancelTextEditing(); return }
+            // First Esc drops a text selection, second one closes the overlay.
+            if activeTool == .textSelect, currentTextRange() != nil {
+                clearTextSelection()
+                needsDisplay = true
+                return
+            }
             window_?.requestFinish()
             return
         }
@@ -407,8 +455,10 @@ final class OverlayView: NSView {
             // layout-dependent, so on a Russian layout ⌘C arrives as "с"
             // and ⌘Z as "я", and no Latin comparison ever matches.
             switch Int(event.keyCode) {
-            case kVK_ANSI_C: copyToClipboard(); return
+            case kVK_ANSI_C: handleCopy();      return
             case kVK_ANSI_S: saveToFile();      return
+            case kVK_ANSI_A:
+                if activeTool == .textSelect { selectAllText(); return }
             case kVK_ANSI_Z:
                 if event.modifierFlags.contains(.shift) { redo() } else { undo() }
                 return
@@ -424,11 +474,20 @@ final class OverlayView: NSView {
         if selection == nil {
             NSCursor.crosshair.set(); return
         }
-        if let sel = selection, let handle = resizeHandle(at: cursorPosition, in: sel) {
+        if let sel = selection, let handle = resizeHandle(at: cursorPosition, in: sel),
+           !(activeTool == .textSelect && textLayout?.hitTest(cursorPosition) != nil) {
             switch handle {
             case .top, .bottom: NSCursor.resizeUpDown.set()
             case .left, .right: NSCursor.resizeLeftRight.set()
             default:            NSCursor.crosshair.set()
+            }
+            return
+        }
+        if activeTool == .textSelect {
+            if textLayout?.hitTest(cursorPosition) != nil {
+                NSCursor.iBeam.set()
+            } else {
+                NSCursor.arrow.set()
             }
             return
         }
@@ -507,7 +566,8 @@ final class OverlayView: NSView {
         if sideToolbar == nil {
             let side = SideToolbarView(tools: [.pencil, .line, .arrow,
                                                .rectangle, .marker, .blur,
-                                               .text, .colorPicker]) {
+                                               .text, .textSelect,
+                                               .colorPicker]) {
                 [weak self] tool in self?.handleToolSelected(tool)
             }
             addSubview(side)
@@ -516,7 +576,7 @@ final class OverlayView: NSView {
         if bottomToolbar == nil {
             let bottom = BottomToolbarView(
                 onSave:  { [weak self] in self?.saveToFile() },
-                onCopy:  { [weak self] in self?.copyToClipboard() },
+                onCopy:  { [weak self] in self?.handleCopy() },
                 onClose: { [weak self] in self?.window_?.requestFinish() },
                 onUndo:  { [weak self] in self?.undo() },
                 onRedo:  { [weak self] in self?.redo() }
@@ -620,9 +680,13 @@ final class OverlayView: NSView {
             removeStrokeWidthPalette()
             colorPaletteView?.removeFromSuperview()
             colorPaletteView = nil
+            if tool == .textSelect { clearTextSelection(); needsDisplay = true }
             updateCursor()
             return
         }
+
+        // Leaving the OCR tool drops its highlight.
+        if activeTool == .textSelect { clearTextSelection(); needsDisplay = true }
 
         activeTool = tool
         sideToolbar?.setActiveTool(tool)
@@ -638,6 +702,10 @@ final class OverlayView: NSView {
 
         colorPaletteView?.removeFromSuperview()
         colorPaletteView = nil
+
+        if tool == .textSelect { startTextRecognition() }
+
+        needsDisplay = true
         updateCursor()
     }
 
@@ -709,7 +777,10 @@ final class OverlayView: NSView {
                                                sourceBounds: bounds)
         case .text:
             startTextEditing(at: point)
-        case .colorPicker: break
+        case .textSelect, .colorPicker:
+            // Not drawing tools — handled before we ever get here.
+            state = .editing
+            return
         }
         hideToolbars()
     }
@@ -818,6 +889,203 @@ final class OverlayView: NSView {
         needsDisplay = true
     }
 
+    // MARK: - Text recognition (OCR)
+
+    /// Runs OCR over the current selection. Cheap to call repeatedly: it
+    /// re-runs only when the region actually changed.
+    private func startTextRecognition(force: Bool = false) {
+        guard let sel = selection, sel.width > 2, sel.height > 2 else { return }
+        if !force, textLayout != nil, recognizedRegion == sel { return }
+
+        recognitionToken += 1
+        let token = recognitionToken
+        recognizedRegion = sel
+        textLayout = nil
+        isRecognizingText = true
+        needsDisplay = true
+
+        TextRecognizer.recognize(in: backgroundCGImage,
+                                 imageBounds: bounds,
+                                 region: sel) { [weak self] layout in
+            guard let self = self, token == self.recognitionToken else { return }
+            self.isRecognizingText = false
+            self.textLayout = layout
+            self.needsDisplay = true
+            self.updateCursor()
+        }
+    }
+
+    private func clearTextSelection() {
+        textAnchor = nil
+        textHead = nil
+    }
+
+    private func currentTextRange() -> (TextPosition, TextPosition)? {
+        guard let anchor = textAnchor, let head = textHead, anchor != head else {
+            return nil
+        }
+        return anchor < head ? (anchor, head) : (head, anchor)
+    }
+
+    private func beginTextSelection(at point: NSPoint, clickCount: Int) {
+        // A click well outside the captured region just clears the selection.
+        if let sel = selection, !sel.insetBy(dx: -12, dy: -12).contains(point) {
+            clearTextSelection()
+            state = .editing
+            needsDisplay = true
+            return
+        }
+        guard let layout = textLayout, !layout.isEmpty else {
+            clearTextSelection()
+            needsDisplay = true
+            return
+        }
+
+        if clickCount >= 3, let (from, to) = layout.lineRange(at: point) {
+            textAnchor = from; textHead = to
+            state = .editing
+            needsDisplay = true
+            return
+        }
+        if clickCount == 2, let (from, to) = layout.wordRange(at: point) {
+            textAnchor = from; textHead = to
+            state = .editing
+            needsDisplay = true
+            return
+        }
+
+        if let position = layout.nearestPosition(to: point) {
+            textAnchor = position
+            textHead = position
+            state = .selectingText
+        } else {
+            clearTextSelection()
+        }
+        needsDisplay = true
+    }
+
+    private func selectAllText() {
+        guard let layout = textLayout, !layout.isEmpty else { return }
+        textAnchor = layout.start
+        textHead = layout.end
+        needsDisplay = true
+    }
+
+    /// Returns false when there's nothing to copy, so the caller can fall
+    /// back to copying the image.
+    @discardableResult
+    private func copySelectedText() -> Bool {
+        guard let layout = textLayout, let (from, to) = currentTextRange() else {
+            return false
+        }
+        let text = layout.text(from: from, to: to)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+
+        // Deliberately does NOT close the overlay: copying a line and then
+        // grabbing another one is the common case.
+        showToast("Text copied")
+        return true
+    }
+
+    // MARK: - OCR drawing
+
+    private func drawTextLayer(in ctx: CGContext) {
+        guard let sel = selection else { return }
+
+        if isRecognizingText {
+            drawLabel("Recognizing text…", above: sel, in: ctx)
+            return
+        }
+        guard let layout = textLayout else { return }
+        if layout.isEmpty {
+            drawLabel("No text found", above: sel, in: ctx)
+            return
+        }
+
+        let accent = NSColor(red: 0.25, green: 0.6, blue: 1.0, alpha: 1.0)
+        ctx.saveGState()
+
+        if let (from, to) = currentTextRange() {
+            ctx.setFillColor(accent.withAlphaComponent(0.45).cgColor)
+            for r in layout.selectionRects(from: from, to: to) {
+                ctx.addPath(CGPath(roundedRect: r.insetBy(dx: -1, dy: -1),
+                                   cornerWidth: 2, cornerHeight: 2,
+                                   transform: nil))
+            }
+            ctx.fillPath()
+        } else {
+            // Faint hint boxes so it's obvious what was recognised.
+            ctx.setFillColor(accent.withAlphaComponent(0.12).cgColor)
+            for line in layout.lines where !line.glyphs.isEmpty {
+                ctx.addPath(CGPath(roundedRect: line.rect.insetBy(dx: -2, dy: -1),
+                                   cornerWidth: 3, cornerHeight: 3,
+                                   transform: nil))
+            }
+            ctx.fillPath()
+        }
+
+        ctx.restoreGState()
+    }
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        toastMessage = message
+        needsDisplay = true
+
+        let item = DispatchWorkItem { [weak self] in
+            self?.toastMessage = nil
+            self?.needsDisplay = true
+        }
+        toastWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: item)
+    }
+
+    private func drawToast(in ctx: CGContext) {
+        guard let message = toastMessage, let sel = selection else { return }
+        let size = labelSize(message)
+        let rect = NSRect(x: sel.midX - size.width / 2,
+                          y: max(6, sel.minY + 10),
+                          width: size.width,
+                          height: size.height)
+        drawLabel(message, in: rect, context: ctx)
+    }
+
+    /// Status text goes just inside the top-left of the selection, so it never
+    /// collides with the dimensions label sitting above it.
+    private func drawLabel(_ text: String, above sel: NSRect, in ctx: CGContext) {
+        let size = labelSize(text)
+        let rect = NSRect(x: min(sel.minX + 6, bounds.width - size.width - 4),
+                          y: max(4, sel.maxY - size.height - 6),
+                          width: size.width,
+                          height: size.height)
+        drawLabel(text, in: rect, context: ctx)
+    }
+
+    private func labelSize(_ text: String) -> NSSize {
+        let size = (text as NSString).size(withAttributes: labelAttributes)
+        return NSSize(width: size.width + 16, height: size.height + 8)
+    }
+
+    private var labelAttributes: [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: 12, weight: .medium),
+         .foregroundColor: NSColor.white]
+    }
+
+    private func drawLabel(_ text: String, in rect: NSRect, context ctx: CGContext) {
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSColor.black.withAlphaComponent(0.8).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+        (text as NSString).draw(at: NSPoint(x: rect.minX + 8, y: rect.minY + 4),
+                                withAttributes: labelAttributes)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
     // MARK: - Export
 
     private func renderSelectionImage() -> NSImage? {
@@ -876,6 +1144,13 @@ final class OverlayView: NSView {
                 }
             }
         }
+    }
+
+    /// ⌘C / the toolbar button: copy the selected *text* when the OCR tool is
+    /// active and something is selected, otherwise copy the image as before.
+    private func handleCopy() {
+        if activeTool == .textSelect, copySelectedText() { return }
+        copyToClipboard()
     }
 
     private func copyToClipboard() {
