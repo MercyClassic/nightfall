@@ -1,70 +1,68 @@
 # Nightfall
 
-## Описание
-**Нативное macOS приложение в menu bar для создания скриншотов и их разметки, вдохновлённое Lightshot.** <br>
-**Приложение живёт в menu bar без иконки в Dock и предоставляет следующее:**
-- **Захват произвольной области экрана**
-- **Захват конкретного окна приложения**
-- **Разметка: карандаш, линия, стрелка, прямоугольник, маркер, блюр, текст**
-- **Сохранение в PNG или копирование в буфер обмена**
-- **Отмена / повтор**
+## Description
+**A native macOS menu bar screenshot and annotation tool inspired by Lightshot.** <br>
+**The app lives in the menu bar with no Dock icon and provides the following:**
+- **Capture screen area**
+- **Capture specific app window**
+- **Annotate with pencil, line, arrow, rectangle, marker, blur, text**
+- **Save as PNG or copy to clipboard**
+- **Undo / Redo**
 
-### Вот как это выглядит:
+### Screenshots:
 
-### Трей
+### Tray
 
 <img src="docs/images/tray.png" width="300"/>
 
-### Захват
+### Capture
 
 <img src="docs/images/capture.png" width="600"/>
 
-## Требования
+## Requirements
 
 - **macOS 13+**
 
-## Старт
+## Setup
 
-**1. Открываем Nightfall.dmg и переносим его в Applications** <br>
+**1. Open Nightfall.dmg and drag it to Applications** <br>
 
-**2. Запускаем приложение:** <br>
-`open Nightfall.app` или через `Finder`
+**2. Launch the application:** <br>
+`open Nightfall.app` or via `Finder`
 
-При первом запуске macOS запросит разрешение на **Запись экрана**. <br>
-Переходим в **Системные настройки → Конфиденциальность и безопасность → Запись экрана → включить Nightfall**.
+On first launch macOS will ask for **Screen Recording** permission. <br>
+Go to **System Settings → Privacy & Security → Screen Recording → enable Nightfall**.
 
-**3. Иконка (опционально):** <br>
-`Assets/icon.png` — PNG размером 256×256, скрипт сборки сам масштабирует до всех нужных размеров.
+**3. Place your icon (optional):** <br>
+`Assets/icon.png` — 256×256 PNG, the build script scales it to all required sizes automatically.
 
-## Хоткеи
+## Hotkeys
 
-| Клавиша | Действие |
-|---------|----------|
-| `⌘⇧2` | Захват области |
-| `⌘⇧1` | Захват окна |
-| `Esc` | Отмена |
-| `Enter` | Сохранить |
-| `⌘C` | Копировать в буфер |
-| `⌘S` | Сохранить в файл |
-| `⌘Z` / `⌘⇧Z` | Отмена / повтор |
+| Key | Action |
+|-----|--------|
+| `⌘⇧2` | Capture area |
+| `⌘⇧1` | Capture window |
+| `Esc` | Cancel |
+| `Enter` | Save |
+| `⌘C` | Copy to clipboard |
+| `⌘S` | Save to file |
+| `⌘Z` / `⌘⇧Z` | Undo / Redo |
 
-## Автозапуск при входе
+## Auto-start at login
 
-**Системные настройки → Основные → Объекты входа → добавить `Nightfall.app`**
+**System Settings → General → Login Items → add `Nightfall.app`**
 
-## Компиляция
-
-Если придётся изменить исходный код, можно пересобрать `Nightfall.app`:
+## Build from source
 
 ```bash
-# по умолчанию используется сертификат NightfallDev
+# default certificate name is NightfallDev
 ./build.sh
 
-# собрать со своим сертификатом
-./build.sh --cert "Название сертификата"
+# build with a custom certificate
+./build.sh --cert "Certificate Name"
 
-# собрать и упаковать в dmg
-./build.sh --cert "Название сертификата" --package
+# build and package into dmg
+./build.sh --cert "Certificate Name" --package
 ```
 
-Скрипт компилирует приложение, генерирует иконку из `Assets/icon.png`, создаёт `Nightfall.app` и опционально упаковывает в `Nightfall.dmg`.
+The script compiles the app, generates the icon from `Assets/icon.png`, creates `Nightfall.app` and optionally packages it into `Nightfall.dmg`.
